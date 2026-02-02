@@ -123,6 +123,26 @@ def get_playground_folder_id(service) -> str:
     return parent_id
 
 
+def is_under_playground(service, file_id: str, playground_id: str) -> bool:
+    """Return True if file_id is the playground folder or is inside it (any depth)."""
+    visited = set()
+    to_visit = [file_id]
+    while to_visit:
+        fid = to_visit.pop()
+        if fid in visited:
+            continue
+        visited.add(fid)
+        if fid == playground_id:
+            return True
+        try:
+            meta = service.files().get(fileId=fid, fields="parents").execute()
+        except Exception:
+            return False
+        parents = meta.get("parents") or []
+        to_visit.extend(p for p in parents if p not in visited)
+    return False
+
+
 def require_api_key(x_api_key: str | None = Header(None), authorization: str | None = Header(None)):
     key = get_api_key()
     bearer = (authorization or "").strip().removeprefix("Bearer ")
@@ -148,13 +168,20 @@ def health():
 def list_files(
     x_api_key: str | None = Header(None),
     authorization: str | None = Header(None),
+    folder_id: str | None = Query(None, description="Folder ID to list inside; omit for Playground root. Use ID from a previous list (e.g. a subfolder)."),
     page_token: str | None = Query(None),
     page_size: int = Query(50, ge=1, le=100),
 ):
     require_api_key(x_api_key, authorization)
     service = get_drive_service()
-    folder_id = get_playground_folder_id(service)
-    q = f"'{folder_id}' in parents and trashed = false"
+    playground_id = get_playground_folder_id(service)
+    parent_id = (folder_id or "").strip() or playground_id
+    if parent_id != playground_id and not is_under_playground(service, parent_id, playground_id):
+        raise HTTPException(
+            status_code=403,
+            detail="Folder is not the Playground root or inside it. Use a folder ID from drive_playground_list.",
+        )
+    q = f"'{parent_id}' in parents and trashed = false"
     result = (
         service.files()
         .list(
@@ -169,6 +196,7 @@ def list_files(
     return {
         "files": result.get("files", []),
         "nextPageToken": result.get("nextPageToken"),
+        "folderId": parent_id,
     }
 
 
@@ -180,13 +208,12 @@ def read_file(
 ):
     require_api_key(x_api_key, authorization)
     service = get_drive_service()
-    folder_id = get_playground_folder_id(service)
+    playground_id = get_playground_folder_id(service)
     meta = service.files().get(fileId=file_id, fields="id, name, mimeType, parents").execute()
-    parents = meta.get("parents") or []
-    if folder_id not in parents:
+    if not is_under_playground(service, file_id, playground_id):
         raise HTTPException(
             status_code=403,
-            detail="File is not a direct child of the Playground folder. Use /list to get file IDs.",
+            detail="File is not inside the Playground folder (root or any subfolder). Use drive_playground_list to get file IDs.",
         )
     try:
         request = service.files().get_media(fileId=file_id)
@@ -205,6 +232,7 @@ class WriteBody(BaseModel):
     name: str
     content: str
     mime_type: str = "text/plain"
+    folder_id: str | None = None  # Omit for Playground root; use a subfolder ID to write inside it
 
 
 @app.post("/write")
@@ -215,19 +243,25 @@ def write_file(
 ):
     require_api_key(x_api_key, authorization)
     service = get_drive_service()
-    folder_id = get_playground_folder_id(service)
+    playground_id = get_playground_folder_id(service)
+    parent_id = (body.folder_id or "").strip() or playground_id
+    if parent_id != playground_id and not is_under_playground(service, parent_id, playground_id):
+        raise HTTPException(
+            status_code=403,
+            detail="Folder is not the Playground root or inside it. Use a folder ID from drive_playground_list.",
+        )
     # Check if file exists (same name in folder)
     existing = (
         service.files()
         .list(
-            q=f"'{folder_id}' in parents and name = '{body.name}' and trashed = false",
+            q=f"'{parent_id}' in parents and name = '{body.name}' and trashed = false",
             fields="files(id)",
             pageSize=1,
         )
         .execute()
     )
     files = existing.get("files", [])
-    meta = {"name": body.name, "mimeType": body.mime_type, "parents": [folder_id]}
+    meta = {"name": body.name, "mimeType": body.mime_type, "parents": [parent_id]}
     media = MediaIoBaseUpload(
         io.BytesIO(body.content.encode("utf-8")),
         mimetype=body.mime_type,
