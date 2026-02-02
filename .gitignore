@@ -1,0 +1,30 @@
+# Google Drive OAuth (do not commit; use Railway Variables instead)
+drive_playground/credentials.json
+drive_playground/token.json
+**/credentials.json
+**/token.json
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+env/
+
+# Env
+.env
+.env.local
+*.local
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
