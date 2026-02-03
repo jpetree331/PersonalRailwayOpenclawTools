@@ -5,6 +5,7 @@ Separate Railway deployment that runs the **tool backends** your OpenClaw bot ca
 **Current tools:**
 
 - **Drive Playground** — List, read, and write files in a single Google Drive folder (My Drive → Personal → AI Research → OpenClaw Playground). See `drive_playground/README.md`.
+- **Local code bridge** — Runs **on your PC** (not on Railway). OpenClaw calls it via ngrok/Tailscale so the bot can read/write files and run commands in a project folder. See `local_bridge/README.md`.
 
 **Adding more tools:** Add new subfolders (e.g. `journal/`, `files/`) with their own Dockerfile or extend this repo to run multiple services. OpenClaw extensions that call these APIs live in the OpenClaw repo; this repo is only the server side.
 
@@ -67,13 +68,17 @@ Default port **8765**. OpenClaw can call `http://localhost:8765` when running lo
 ```
 TOOLS/
 ├── README.md           (this file)
-├── Dockerfile          (builds and runs Drive Playground; extend for more tools)
+├── Dockerfile          (builds and runs Drive Playground on Railway)
 ├── .gitignore
-└── drive_playground/   (Google Drive list/read/write API)
-    ├── drive_playground_service.py
+├── drive_playground/   (Google Drive list/read/write API — deploy to Railway)
+│   ├── drive_playground_service.py
+│   ├── requirements.txt
+│   ├── README.md
+│   └── OPENCLAW_TOOL_SCHEMA.md
+└── local_bridge/       (Local code bridge — run on your PC, expose via ngrok/Tailscale)
+    ├── code_bridge_service.py
     ├── requirements.txt
-    ├── README.md
-    └── OPENCLAW_TOOL_SCHEMA.md  (API contract for OpenClaw tools)
+    └── README.md
 ```
 
-Future tools: add e.g. `journal/`, `files/` and either run them in the same container (multi-process) or as separate Railway services; OpenClaw tools in the OpenClaw repo call the URLs you deploy here.
+Future tools: add more subfolders; OpenClaw extensions in the OpenClaw repo call these APIs.

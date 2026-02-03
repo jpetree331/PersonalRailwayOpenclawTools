@@ -46,19 +46,30 @@ Set these as **Railway Variables** (no credential files):
 - **DRIVE_PLAYGROUND_FOLDER_ID** — (optional) Your Drive folder ID.
 - **PORT** — Railway sets this; override only if needed.
 
-## 4. Run the service
+## 4. Get the token (one-time, for Railway)
+
+**Simplest:** Run the token script once. It opens the browser for Google sign-in and saves `token.json`. Then copy that file’s full contents into Railway as **GOOGLE_DRIVE_TOKEN_JSON**.
 
 ```bash
 cd drive_playground
-pip install -r requirements.txt
+pip install -r requirements.txt   # if you haven't already
+python get_token.py
+```
+
+A browser will open; sign in with Google and allow access. When it finishes, copy the **entire contents** of `token.json` into Railway → your TOOLS service → Variables → **GOOGLE_DRIVE_TOKEN_JSON**.
+
+## 5. Run the service
+
+```bash
+cd drive_playground
 python drive_playground_service.py
 ```
 
-First run will open a browser for Google sign-in; the token is saved to `token.json` (do not commit it).
+(If you haven’t run `get_token.py` yet and don’t have `GOOGLE_DRIVE_TOKEN_JSON` set, the first request to an endpoint like `/list` would trigger the OAuth flow instead.)
 
 Default port **8765**. Override with `PORT=9000 python drive_playground_service.py`.
 
-## 5. API endpoints
+## 6. API endpoints
 
 All requests require header: `X-API-Key: <DRIVE_PLAYGROUND_API_KEY>` or `Authorization: Bearer <DRIVE_PLAYGROUND_API_KEY>`.
 
@@ -69,6 +80,6 @@ All requests require header: `X-API-Key: <DRIVE_PLAYGROUND_API_KEY>` or `Authori
 | GET | `/files/{file_id}/content` | Read file content (direct children of Playground only). |
 | POST | `/write` | Create or update a file. Body: `{"name": "filename.txt", "content": "...", "mime_type": "text/plain"}`. |
 
-## 6. OpenClaw tool
+## 7. OpenClaw tool
 
 The OpenClaw **drive-playground** extension (in the OpenClaw repo) calls this API. In OpenClaw config set `plugins.entries["drive-playground"].config.baseUrl` to this service’s URL (e.g. `https://your-tools.up.railway.app`) and `apiKey` to the same value as `DRIVE_PLAYGROUND_API_KEY`. Add the three tools to `tools.allow`. See the root README in this repo and `OPENCLAW_TOOL_SCHEMA.md` for the API contract.

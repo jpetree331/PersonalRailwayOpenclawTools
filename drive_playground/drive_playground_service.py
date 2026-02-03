@@ -24,6 +24,7 @@ import os
 import io
 from pathlib import Path
 
+import httpx
 from fastapi import FastAPI, HTTPException, Header, Query
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel
@@ -228,9 +229,19 @@ def read_file(
         raise HTTPException(status_code=404, detail=str(e))
 
 
+# Google native app MIME types: create empty Doc/Sheet/Slide with no media
+GOOGLE_APP_MIME_TYPES = {
+    "application/vnd.google-apps.document",
+    "application/vnd.google-apps.spreadsheet",
+    "application/vnd.google-apps.presentation",
+}
+
+
 class WriteBody(BaseModel):
+    """Provide content (text), file_url (binary), or neither for empty Google Doc/Sheet/Slide."""
     name: str
-    content: str
+    content: str | None = None   # text content
+    file_url: str | None = None  # HTTP/signed URL to download binary (e.g. MP3, Office, etc.)
     mime_type: str = "text/plain"
     folder_id: str | None = None  # Omit for Playground root; use a subfolder ID to write inside it
 
@@ -241,6 +252,20 @@ def write_file(
     x_api_key: str | None = Header(None),
     authorization: str | None = Header(None),
 ):
+    has_content = body.content is not None
+    has_file_url = bool((body.file_url or "").strip())
+    empty_google_app = body.mime_type in GOOGLE_APP_MIME_TYPES and not has_content and not has_file_url
+
+    if not has_content and not has_file_url and not empty_google_app:
+        raise HTTPException(
+            status_code=400,
+            detail="Provide 'content' (text), 'file_url' (binary), or use mime_type Google Doc/Sheet/Slide for an empty file.",
+        )
+    if has_content and has_file_url:
+        raise HTTPException(
+            status_code=400,
+            detail="Provide only one of 'content' or 'file_url', not both.",
+        )
     require_api_key(x_api_key, authorization)
     service = get_drive_service()
     playground_id = get_playground_folder_id(service)
@@ -250,6 +275,31 @@ def write_file(
             status_code=403,
             detail="Folder is not the Playground root or inside it. Use a folder ID from drive_playground_list.",
         )
+
+    meta = {"name": body.name, "mimeType": body.mime_type, "parents": [parent_id]}
+    media = None
+
+    if body.file_url:
+        try:
+            with httpx.Client(timeout=60.0) as client:
+                resp = client.get(body.file_url)
+                resp.raise_for_status()
+                raw = resp.content
+        except httpx.HTTPError as e:
+            raise HTTPException(status_code=502, detail=f"Failed to fetch file_url: {e}") from e
+        media = MediaIoBaseUpload(
+            io.BytesIO(raw),
+            mimetype=body.mime_type,
+            resumable=True,
+        )
+    elif has_content:
+        media = MediaIoBaseUpload(
+            io.BytesIO((body.content or "").encode("utf-8")),
+            mimetype=body.mime_type,
+            resumable=False,
+        )
+    # else: empty_google_app — no media
+
     # Check if file exists (same name in folder)
     existing = (
         service.files()
@@ -261,19 +311,22 @@ def write_file(
         .execute()
     )
     files = existing.get("files", [])
-    meta = {"name": body.name, "mimeType": body.mime_type, "parents": [parent_id]}
-    media = MediaIoBaseUpload(
-        io.BytesIO(body.content.encode("utf-8")),
-        mimetype=body.mime_type,
-        resumable=False,
-    )
+
     if files:
         file_id = files[0]["id"]
-        service.files().update(fileId=file_id, body={"name": body.name}).execute()
+        if media is None:
+            raise HTTPException(
+                status_code=409,
+                detail="A file with this name already exists. Provide content or file_url to update.",
+            )
+        service.files().update(fileId=file_id, body={"name": body.name, "mimeType": body.mime_type}).execute()
         service.files().update(fileId=file_id, media_body=media).execute()
         return {"id": file_id, "action": "updated"}
     else:
-        created = service.files().create(body=meta, media_body=media, fields="id").execute()
+        if media is not None:
+            created = service.files().create(body=meta, media_body=media, fields="id").execute()
+        else:
+            created = service.files().create(body=meta, fields="id").execute()
         return {"id": created["id"], "action": "created"}
 
 
